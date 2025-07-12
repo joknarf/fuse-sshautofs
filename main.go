@@ -121,7 +121,7 @@ func updateMountAccess(mnt string) {
 }
 
 // background goroutine to unmount unused sshfs mounts after timeout
-func startUnmountWorker(sshfsRoot string, timeout time.Duration) {
+func startUnmountWorker(timeout time.Duration) {
 	go func() {
 		for {
 			time.Sleep(10 * time.Second)
@@ -297,7 +297,7 @@ func main() {
 	}()
 
 	// Start background unmount worker
-	startUnmountWorker(sshfsRoot, *timeout)
+	startUnmountWorker(*timeout)
 
 	log.Println("sshautofs mounted successfully, serving...")
 	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf})
