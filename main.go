@@ -1,8 +1,7 @@
-
-
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -15,17 +14,15 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"bufio"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
 )
 
-
 // sshAutoFS implements a FUSE FS that shows a symlink for each host directory,
 // and mounts sshfs on access.
 type sshAutoFS struct {
-	mntRoot string // e.g. /home/user/mnt
+	mntRoot   string // e.g. /home/user/mnt
 	sshfsRoot string // e.g. /home/user/mnt-ssh
 	sshConfig string // Path to ssh config file, if any
 }
@@ -88,15 +85,13 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 		if err != nil {
 			return nil, syscall.EIO
 		}
-		var sshfsCmd *exec.Cmd
+		sshopts := []string{"-o", "LogLevel=ERROR", "-o", "BatchMode=yes"}
+		sshfsargs := append([]string{fmt.Sprintf("%s:/", hostname), mntTarget}, sshopts...)
 		log.Println("Mounting sshfs for host:", hostname, "at", mntTarget, "with sshConfig:", d.fsys.sshConfig)
 		if d.fsys.sshConfig != "" {
-			// Use ssh config file if specified
-			sshfsCmd = exec.Command("sshfs", "-F", d.fsys.sshConfig, fmt.Sprintf("%s:/", hostname), mntTarget)
-		} else {
-			// Run sshfs: host:/ mntTarget
-			sshfsCmd = exec.Command("sshfs", fmt.Sprintf("%s:/", hostname), mntTarget)
+			sshfsargs = append(sshfsargs, []string{"-F", d.fsys.sshConfig}...)
 		}
+		sshfsCmd := exec.Command("sshfs", sshfsargs...)
 		sshfsCmd.Env = os.Environ()
 		if err := sshfsCmd.Run(); err != nil {
 			// If mount failed, remove the directory so the symlink does not appear
@@ -109,10 +104,11 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	updateMountAccess(mntTarget)
 	// Return a symlink node
 	return &symlinkNode{
-		name: name,
+		name:   name,
 		target: mntTarget,
 	}, nil
 }
+
 // Map to track last access time for each mount
 var mountAccessMu sync.Mutex
 var mountAccess = make(map[string]time.Time)
@@ -128,7 +124,7 @@ func updateMountAccess(mnt string) {
 func startUnmountWorker(sshfsRoot string, timeout time.Duration) {
 	go func() {
 		for {
-			time.Sleep(10*time.Second)
+			time.Sleep(10 * time.Second)
 			now := time.Now()
 			mountAccessMu.Lock()
 			for mnt, last := range mountAccess {
@@ -254,19 +250,19 @@ func main() {
 	if !*foreground {
 		// Fork and detach
 		if os.Getppid() != 1 {
-				exe, err := os.Executable()
-				if err != nil {
-						os.Exit(1)
-				}
-				attr := &os.ProcAttr{
-						Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-						Env:   os.Environ(),
-				}
-				_, err = os.StartProcess(exe, append([]string{exe, "-foreground"}, os.Args[1:]...), attr)
-				if err != nil {
-						os.Exit(1)
-				}
-				os.Exit(0)
+			exe, err := os.Executable()
+			if err != nil {
+				os.Exit(1)
+			}
+			attr := &os.ProcAttr{
+				Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+				Env:   os.Environ(),
+			}
+			_, err = os.StartProcess(exe, append([]string{exe, "-foreground"}, os.Args[1:]...), attr)
+			if err != nil {
+				os.Exit(1)
+			}
+			os.Exit(0)
 		}
 		// Redirect output to /dev/null
 		f, _ := os.OpenFile("/dev/null", os.O_RDWR, 0)
@@ -280,9 +276,9 @@ func main() {
 		mntRoot,
 		fuse.FSName("sshautofs"),
 		fuse.Subtype("sshautofs"),
-//		fuse.WritebackCache(),
-//		fuse.MaxReadahead(1<<20),
-//		fuse.AsyncRead(),
+		//		fuse.WritebackCache(),
+		//		fuse.MaxReadahead(1<<20),
+		//		fuse.AsyncRead(),
 	)
 	if err != nil {
 		log.Fatalf("Failed to mount: %v", err)
