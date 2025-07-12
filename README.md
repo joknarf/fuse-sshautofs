@@ -14,7 +14,7 @@ fuse automount sshfs filesystems
 ## Usage
 
 ```
-$ sshautofs [-timeout=<duration>] [-F=<ssh_config_file>] [-foreground] <mountpoint>
+$ sshautofs [-timeout=<duration>] [-F <ssh_config_file>] [-foreground] <mountpoint>
 ```
 
 ## Example
@@ -37,5 +37,5 @@ the mount is expiring by default after 10min, the sshfs will be unmounted if not
 ## Options
 
 * `-timeout=1m` define expiration timeout to unmount sshfs
-* `-F=~/ssh/autofs` define ssh config file to use for sshfs
+* `-F ~/ssh/autofs` define ssh config file to use for sshfs
 * `-foreground` launch sshautofs in foreground (default daemonize)
