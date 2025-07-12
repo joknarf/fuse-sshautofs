@@ -17,7 +17,7 @@ fuse automount sshfs filesystems
 $ sshautofs [-timeout=<duration>] [-F=<ssh_config_file>] [-foreground] <mountpoint>
 ```
 
-## example
+## Example
 ```
 $ sshautofs ~/servers
 $ cd ~/servers/myhost
