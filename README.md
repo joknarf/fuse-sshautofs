@@ -4,6 +4,7 @@ fuse automount sshfs filesystems
 * automatic access to servers filesystems through fuse-sshfs when accessing `<mountpoint>/<server>`
 * use sshfs to automatically mount `sshfs <server>:/ <mountpoint>-ssh/<server>`
 * creates symlink `<mountpoint>/<server> -> <mountpoint>-ssh/<server>` to access
+* automatic unmount after timeout
 
 ## Prerequisites
 
