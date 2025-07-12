@@ -22,8 +22,8 @@ $ sshautofs [-timeout=<duration>] [-F=<ssh_config_file>] [-foreground] <mountpoi
 $ sshautofs ~/servers
 $ cd ~/servers/myhost
 ```
-Automatically mounts `sshfs myhost:/ ~/servers-ssh/myhost` accessible through `~/servers/myhost` symlink
-the mount is expiring by default after 10min, the sshfs will be unmounted if not in used.
+Automatically mounts `sshfs myhost:/ ~/servers-ssh/myhost` accessible through `~/servers/myhost` symlink  
+the mount is expiring by default after 10min, the sshfs will be unmounted if not in use.
 
 ## Options
 
