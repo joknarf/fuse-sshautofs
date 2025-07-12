@@ -44,7 +44,7 @@ var _ fs.HandleReadDirAller = (*autoDir)(nil)
 
 func (d *autoDir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 1
-	a.Mode = os.ModeDir | 0555
+	a.Mode = os.ModeDir | 0500
 	a.Mtime = time.Now()
 	a.Ctime = time.Now()
 	a.Uid = uint32(os.Getuid())
