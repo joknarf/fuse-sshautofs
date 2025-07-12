@@ -1,6 +1,10 @@
 # sshautofs
 fuse automount sshfs filesystems
 
+# Prerequisites
+* fuse sshfs
+* fuse3
+  
 # Example
 ```
 $ sshautofs ~/servers
