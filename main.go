@@ -25,6 +25,7 @@ type sshAutoFS struct {
 	mntRoot   string // e.g. /home/user/mnt
 	sshfsRoot string // e.g. /home/user/mnt-ssh
 	sshConfig string // Path to ssh config file, if any
+	sshfsOpts string // Additional sshfs options
 }
 
 var _ fs.FS = (*sshAutoFS)(nil)
@@ -85,8 +86,7 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 		if err != nil {
 			return nil, syscall.EIO
 		}
-		sshopts := []string{"-o", "LogLevel=ERROR", "-o", "BatchMode=yes"}
-		sshfsargs := append([]string{fmt.Sprintf("%s:/", hostname), mntTarget}, sshopts...)
+		sshfsargs := []string{fmt.Sprintf("%s:/", hostname), mntTarget, "-o", d.fsys.sshfsOpts}
 		log.Println("Mounting sshfs for host:", hostname, "at", mntTarget, "with sshConfig:", d.fsys.sshConfig)
 		if d.fsys.sshConfig != "" {
 			sshfsargs = append(sshfsargs, []string{"-F", d.fsys.sshConfig}...)
@@ -221,6 +221,7 @@ func main() {
 	sshConfig := flag.String("F", "", "ssh config file to use")
 	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 10m, 30s)")
 	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
+	opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <mountpoint>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  Example: %s ~/mnt\n", os.Args[0])
@@ -234,7 +235,10 @@ func main() {
 			log.Fatalf("Failed to resolve ssh config file: %v", errF)
 		}
 	}
-
+	sshfsOpts := "LogLevel=ERROR,BatchMode=yes"
+	if *opts != "" {
+		sshfsOpts += "," + *opts
+	}
 	if flag.NArg() < 1 {
 		log.Fatal("Mount point is required as a positional argument")
 	}
@@ -300,7 +304,7 @@ func main() {
 	startUnmountWorker(*timeout)
 
 	log.Println("sshautofs mounted successfully, serving...")
-	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf})
+	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf, sshfsOpts: sshfsOpts})
 	if err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
