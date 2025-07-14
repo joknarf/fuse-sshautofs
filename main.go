@@ -118,7 +118,7 @@ func (d *cmdDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 func (c *cmdNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 3
-	a.Mode = 0444 // Read-only file
+	a.Mode = 0400
 	a.Mtime = time.Now()
 	a.Ctime = time.Now()
 	a.Uid = uint32(os.Getuid())
@@ -134,10 +134,9 @@ func (c *cmdNode) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.Op
 }
 
 func (c *cmdNode) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	log.Println("Executing on host", c.host, c.command)
 	if c.output == nil {
-		// Execute the command to get the process list
-		sshargs := []string{"-o", "BatchMode=yes", "-o", "LogLevel=ERROR"}
+		log.Println("Executing on host", c.host, c.command)
+		sshargs := []string{"-n", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"}
 		if c.fsys.sshConfig != "" {
 			sshargs = append(sshargs, "-F", c.fsys.sshConfig)
 		}
@@ -148,6 +147,7 @@ func (c *cmdNode) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.Re
 		if err != nil {
 			return syscall.EIO
 		}
+		// c.output = append([]byte("/bin/cat <<'@@EOF@@'\n"), append(c.output, []byte("\n@@EOF@@\n")...)...)
 	}
 	end := req.Offset + int64(req.Size)
 	if end > int64(len(c.output)) {
