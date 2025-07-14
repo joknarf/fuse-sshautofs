@@ -175,6 +175,7 @@ func (d *autoDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	entries := []fuse.Dirent{
 		{Inode: 1, Name: ".", Type: fuse.DT_Dir},
 		{Inode: 1, Name: "..", Type: fuse.DT_Dir},
+		{Inode: 2, Name: "cmd", Type: fuse.DT_Dir}, // Special cmd directory
 	}
 	files, err := os.ReadDir(d.fsys.sshfsRoot)
 	if err == nil {
