@@ -17,6 +17,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"bazil.org/fuse/fuseutil"
 )
 
 // sshAutoFS implements a FUSE FS that shows a symlink for each host directory,
@@ -48,14 +49,12 @@ var _ fs.HandleReadDirAller = (*autoDir)(nil)
 type cmdNode struct {
 	fsys    *sshAutoFS
 	command string // Command to execute, e.g. "/bin/ps -ef"
-	output  []byte
 	host    string // Host for which this command is executed
 }
 
 var _ fs.Node = (*cmdNode)(nil)
 var _ fs.NodeOpener = (*cmdNode)(nil)
 var _ fs.Handle = (*cmdNode)(nil)
-var _ fs.HandleReader = (*cmdNode)(nil)
 
 // cmdDir represents the /cmd directory
 type cmdDir struct {
@@ -66,6 +65,14 @@ type cmdDir struct {
 var _ fs.Node = (*cmdDir)(nil)
 var _ fs.NodeStringLookuper = (*cmdDir)(nil)
 var _ fs.HandleReadDirAller = (*cmdDir)(nil)
+
+type cmdHandle struct {
+	host, command string
+	fsys          *sshAutoFS
+	output        []byte
+}
+
+var _ fs.HandleReader = (*cmdHandle)(nil)
 
 func (d *cmdDir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 3
@@ -130,31 +137,35 @@ func (c *cmdNode) Attr(ctx context.Context, a *fuse.Attr) error {
 func (c *cmdNode) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	// log.Println("Open /cmd/ for host:", c.host)
 	resp.Flags |= fuse.OpenDirectIO
-	return c, nil
+	return &cmdHandle{
+		host:    c.host,
+		command: c.command,
+		fsys:    c.fsys,
+	}, nil
 }
 
-func (c *cmdNode) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	if c.output == nil {
-		log.Println("Executing on host", c.host, c.command)
+func (h *cmdHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	if h.output == nil {
+		log.Println("Executing on host", h.host, h.command)
 		sshargs := []string{"-n", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"}
-		if c.fsys.sshConfig != "" {
-			sshargs = append(sshargs, "-F", c.fsys.sshConfig)
+		if h.fsys.sshConfig != "" {
+			sshargs = append(sshargs, "-F", h.fsys.sshConfig)
 		}
-		sshargs = append(sshargs, c.host, c.command)
+		sshargs = append(sshargs, h.host, h.command)
 		cmd := exec.Command("ssh", sshargs...)
 		var err error
-		c.output, err = cmd.Output()
+		h.output, err = cmd.Output()
 		if err != nil {
 			return syscall.EIO
 		}
-		// c.output = append([]byte("/bin/cat <<'@@EOF@@'\n"), append(c.output, []byte("\n@@EOF@@\n")...)...)
+		// h.output = append([]byte("/bin/cat <<'@@EOF@@'\n"), append(h.output, []byte("\n@@EOF@@\n")...)...)
 	}
-	end := req.Offset + int64(req.Size)
-	if end > int64(len(c.output)) {
-		end = int64(len(c.output))
-	}
+	fuseutil.HandleRead(req, resp, h.output)
+	return nil
+}
 
-	resp.Data = c.output[req.Offset:end]
+func (h *cmdHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	h.output = nil // help GC
 	return nil
 }
 
