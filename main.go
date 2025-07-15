@@ -34,6 +34,11 @@ type autoDir struct {
 	fsys *sshAutoFS
 }
 
+type symlinkNode struct {
+	name   string
+	target string
+}
+
 // cmdDir represents the /cmd directory
 type cmdDir struct {
 	fsys *sshAutoFS
@@ -42,15 +47,16 @@ type cmdDir struct {
 
 // cmdNode represents a special node for handling the /cmd/<host>/<cmd> path
 type cmdNode struct {
-	fsys    *sshAutoFS
-	command string // Command to execute, e.g. "/bin/ps -ef"
 	host    string // Host for which this command is executed
+	command string // Command to execute, e.g. "/bin/ps -ef"
+	fsys    *sshAutoFS
 }
 
 type cmdHandle struct {
-	host, command string
-	fsys          *sshAutoFS
-	output        []byte
+	host    string
+	command string
+	fsys    *sshAutoFS
+	output  []byte
 }
 
 // Ensure that our types implement the required interfaces
@@ -60,6 +66,9 @@ var _ fs.Node = (*autoDir)(nil)
 var _ fs.Handle = (*autoDir)(nil)
 var _ fs.NodeStringLookuper = (*autoDir)(nil)
 var _ fs.HandleReadDirAller = (*autoDir)(nil)
+
+var _ fs.Node = (*symlinkNode)(nil)
+var _ fs.NodeReadlinker = (*symlinkNode)(nil)
 
 var _ fs.Node = (*cmdNode)(nil)
 var _ fs.NodeOpener = (*cmdNode)(nil)
@@ -286,14 +295,6 @@ func startUnmountWorker(timeout time.Duration) {
 		}
 	}()
 }
-
-type symlinkNode struct {
-	name   string
-	target string
-}
-
-var _ fs.Node = (*symlinkNode)(nil)
-var _ fs.NodeReadlinker = (*symlinkNode)(nil)
 
 func (s *symlinkNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 2
