@@ -30,31 +30,9 @@ type sshAutoFS struct {
 	commands  map[string]string // Map to store commands
 }
 
-var _ fs.FS = (*sshAutoFS)(nil)
-
-func (fsys *sshAutoFS) Root() (fs.Node, error) {
-	return &autoDir{fsys: fsys}, nil
-}
-
 type autoDir struct {
 	fsys *sshAutoFS
 }
-
-var _ fs.Node = (*autoDir)(nil)
-var _ fs.Handle = (*autoDir)(nil)
-var _ fs.NodeStringLookuper = (*autoDir)(nil)
-var _ fs.HandleReadDirAller = (*autoDir)(nil)
-
-// cmdNode represents a special node for handling the /cmd/<host>/ps path
-type cmdNode struct {
-	fsys    *sshAutoFS
-	command string // Command to execute, e.g. "/bin/ps -ef"
-	host    string // Host for which this command is executed
-}
-
-var _ fs.Node = (*cmdNode)(nil)
-var _ fs.NodeOpener = (*cmdNode)(nil)
-var _ fs.Handle = (*cmdNode)(nil)
 
 // cmdDir represents the /cmd directory
 type cmdDir struct {
@@ -62,9 +40,12 @@ type cmdDir struct {
 	host string // Host for which commands are available
 }
 
-var _ fs.Node = (*cmdDir)(nil)
-var _ fs.NodeStringLookuper = (*cmdDir)(nil)
-var _ fs.HandleReadDirAller = (*cmdDir)(nil)
+// cmdNode represents a special node for handling the /cmd/<host>/<cmd> path
+type cmdNode struct {
+	fsys    *sshAutoFS
+	command string // Command to execute, e.g. "/bin/ps -ef"
+	host    string // Host for which this command is executed
+}
 
 type cmdHandle struct {
 	host, command string
@@ -72,7 +53,27 @@ type cmdHandle struct {
 	output        []byte
 }
 
+// Ensure that our types implement the required interfaces
+var _ fs.FS = (*sshAutoFS)(nil)
+
+var _ fs.Node = (*autoDir)(nil)
+var _ fs.Handle = (*autoDir)(nil)
+var _ fs.NodeStringLookuper = (*autoDir)(nil)
+var _ fs.HandleReadDirAller = (*autoDir)(nil)
+
+var _ fs.Node = (*cmdNode)(nil)
+var _ fs.NodeOpener = (*cmdNode)(nil)
+var _ fs.Handle = (*cmdNode)(nil)
+
+var _ fs.Node = (*cmdDir)(nil)
+var _ fs.NodeStringLookuper = (*cmdDir)(nil)
+var _ fs.HandleReadDirAller = (*cmdDir)(nil)
+
 var _ fs.HandleReader = (*cmdHandle)(nil)
+
+func (fsys *sshAutoFS) Root() (fs.Node, error) {
+	return &autoDir{fsys: fsys}, nil
+}
 
 func (d *cmdDir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 3
