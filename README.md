@@ -1,3 +1,5 @@
+[![go](https://img.shields.io/badge/lang-Go%20-blue.svg)]()
+
 # sshautofs
 fuse automount sshfs filesystems
 
