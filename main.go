@@ -17,31 +17,167 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"bazil.org/fuse/fuseutil"
 )
 
 // sshAutoFS implements a FUSE FS that shows a symlink for each host directory,
 // and mounts sshfs on access.
 type sshAutoFS struct {
-	mntRoot   string // e.g. /home/user/mnt
-	sshfsRoot string // e.g. /home/user/mnt-ssh
-	sshConfig string // Path to ssh config file, if any
-	sshfsOpts string // Additional sshfs options
-}
-
-var _ fs.FS = (*sshAutoFS)(nil)
-
-func (fsys *sshAutoFS) Root() (fs.Node, error) {
-	return &autoDir{fsys: fsys}, nil
+	mntRoot   string            // e.g. /home/user/mnt
+	sshfsRoot string            // e.g. /home/user/mnt-ssh
+	sshConfig string            // Path to ssh config file, if any
+	sshfsOpts string            // Additional sshfs options
+	commands  map[string]string // Map to store commands
 }
 
 type autoDir struct {
 	fsys *sshAutoFS
 }
 
+type symlinkNode struct {
+	name   string
+	target string
+}
+
+// cmdDir represents the /cmd directory
+type cmdDir struct {
+	fsys *sshAutoFS
+	host string // Host for which commands are available
+}
+
+// cmdNode represents a special node for handling the /cmd/<host>/<cmd> path
+type cmdNode struct {
+	host    string // Host for which this command is executed
+	command string // Command to execute, e.g. "/bin/ps -ef"
+	fsys    *sshAutoFS
+}
+
+type cmdHandle struct {
+	host    string
+	command string
+	fsys    *sshAutoFS
+	output  []byte
+}
+
+// Ensure that our types implement the required interfaces
+var _ fs.FS = (*sshAutoFS)(nil)
+
 var _ fs.Node = (*autoDir)(nil)
 var _ fs.Handle = (*autoDir)(nil)
 var _ fs.NodeStringLookuper = (*autoDir)(nil)
 var _ fs.HandleReadDirAller = (*autoDir)(nil)
+
+var _ fs.Node = (*symlinkNode)(nil)
+var _ fs.NodeReadlinker = (*symlinkNode)(nil)
+
+var _ fs.Node = (*cmdNode)(nil)
+var _ fs.NodeOpener = (*cmdNode)(nil)
+var _ fs.Handle = (*cmdNode)(nil)
+
+var _ fs.Node = (*cmdDir)(nil)
+var _ fs.NodeStringLookuper = (*cmdDir)(nil)
+var _ fs.HandleReadDirAller = (*cmdDir)(nil)
+
+var _ fs.HandleReader = (*cmdHandle)(nil)
+
+func (fsys *sshAutoFS) Root() (fs.Node, error) {
+	return &autoDir{fsys: fsys}, nil
+}
+
+func (d *cmdDir) Attr(ctx context.Context, a *fuse.Attr) error {
+	a.Inode = 3
+	a.Mode = os.ModeDir | 0500
+	a.Mtime = time.Now()
+	a.Ctime = time.Now()
+	a.Uid = uint32(os.Getuid())
+	a.Gid = uint32(os.Getgid())
+	a.Size = 4096
+	a.Blocks = 1
+	return nil
+}
+
+func (d *cmdDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
+	// log.Println("Lookup for cmd:", name)
+	if strings.HasPrefix(name, ".") {
+		return nil, syscall.ENOENT // No such file or directory
+	}
+	command, exists := d.fsys.commands[name]
+	if exists {
+		return &cmdNode{fsys: d.fsys, command: command, host: d.host}, nil
+	}
+	return &cmdDir{fsys: d.fsys, host: name}, nil
+}
+
+func (d *cmdDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
+	entries := []fuse.Dirent{
+		{Inode: 3, Name: ".", Type: fuse.DT_Dir},
+		{Inode: 3, Name: "..", Type: fuse.DT_Dir},
+	}
+	// log.Println("ReadDirAll for /cmd/<host> with host:", d.host)
+	if d.host != "" {
+		// Add the special /cmd/<host>/ps entry
+		for cmd := range d.fsys.commands {
+			entries = append(entries, fuse.Dirent{Inode: 5, Name: cmd, Type: fuse.DT_File})
+		}
+	} else {
+		// Add entries for each host directory
+		files, err := os.ReadDir(d.fsys.sshfsRoot)
+		if err == nil {
+			for _, f := range files {
+				if f.IsDir() {
+					entries = append(entries, fuse.Dirent{Inode: 4, Name: f.Name(), Type: fuse.DT_Dir})
+				}
+			}
+		}
+	}
+	return entries, nil
+}
+
+func (c *cmdNode) Attr(ctx context.Context, a *fuse.Attr) error {
+	a.Inode = 3
+	a.Mode = 0400
+	a.Mtime = time.Now()
+	a.Ctime = time.Now()
+	a.Uid = uint32(os.Getuid())
+	a.Gid = uint32(os.Getgid())
+	a.Size = 0 // Size is unknown until read
+	return nil
+}
+
+func (c *cmdNode) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
+	// log.Println("Open /cmd/ for host:", c.host)
+	resp.Flags |= fuse.OpenDirectIO
+	return &cmdHandle{
+		host:    c.host,
+		command: c.command,
+		fsys:    c.fsys,
+	}, nil
+}
+
+func (h *cmdHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
+	if h.output == nil {
+		log.Println("Executing on host", h.host, h.command)
+		sshargs := []string{"-n", "-o", "BatchMode=yes", "-o", "LogLevel=ERROR"}
+		if h.fsys.sshConfig != "" {
+			sshargs = append(sshargs, "-F", h.fsys.sshConfig)
+		}
+		sshargs = append(sshargs, h.host, h.command)
+		cmd := exec.Command("ssh", sshargs...)
+		var err error
+		h.output, err = cmd.Output()
+		if err != nil {
+			return syscall.EIO
+		}
+		// h.output = append([]byte("/bin/cat <<'@@EOF@@'\n"), append(h.output, []byte("\n@@EOF@@\n")...)...)
+	}
+	fuseutil.HandleRead(req, resp, h.output)
+	return nil
+}
+
+func (h *cmdHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	h.output = nil // help GC
+	return nil
+}
 
 func (d *autoDir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 1
@@ -61,6 +197,9 @@ func (d *autoDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 		{Inode: 1, Name: ".", Type: fuse.DT_Dir},
 		{Inode: 1, Name: "..", Type: fuse.DT_Dir},
 	}
+	if len(d.fsys.commands) > 0 {
+		entries = append(entries, fuse.Dirent{Inode: 2, Name: "cmd", Type: fuse.DT_Dir}) // Special cmd directory
+	}
 	files, err := os.ReadDir(d.fsys.sshfsRoot)
 	if err == nil {
 		for _, f := range files {
@@ -74,7 +213,12 @@ func (d *autoDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 // On lookup, if host dir, ensure sshfs is mounted, then return a symlink node
 func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	hostname := strings.Split(name, "/")[0]
+	// Check if the path is for the special /cmd/<host>/ps
+	//log.Println("Lookup for:", name)
+	if name == "cmd" {
+		return &cmdDir{fsys: d.fsys}, nil
+	}
+	hostname := name
 	if strings.HasPrefix(hostname, ".") || hostname == "" {
 		return nil, syscall.ENOENT // No such file or directory
 	}
@@ -152,14 +296,6 @@ func startUnmountWorker(timeout time.Duration) {
 	}()
 }
 
-type symlinkNode struct {
-	name   string
-	target string
-}
-
-var _ fs.Node = (*symlinkNode)(nil)
-var _ fs.NodeReadlinker = (*symlinkNode)(nil)
-
 func (s *symlinkNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Inode = 2
 	a.Mode = os.ModeSymlink | 0777
@@ -221,12 +357,31 @@ func main() {
 	sshConfig := flag.String("F", "", "ssh config file to use")
 	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 10m, 30s)")
 	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
+	cmd := flag.String("cmd", "", "Command to run for /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)")
 	opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s <mountpoint>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  Example: %s ~/mnt\n", os.Args[0])
 	}
 	flag.Parse()
+	commands := make(map[string]string)
+	if *cmd != "" {
+		for _, pair := range strings.Split(*cmd, ",") {
+			parts := strings.SplitN(pair, "=", 2)
+			if len(parts) != 2 {
+				log.Fatalf("Invalid command format: %s, expected format is cmd='/path/to/cmd args'", pair)
+			}
+			name := strings.TrimSpace(parts[0])
+			command := strings.TrimSpace(parts[1])
+			if name == "" || command == "" {
+				log.Fatalf("Invalid command name or command: %s", pair)
+			}
+			commands[name] = command
+			if *foreground {
+				log.Printf("Registered command: %s -> %s\n", name, command)
+			}
+		}
+	}
 	sshConf := ""
 	if *sshConfig != "" {
 		var errF error
@@ -280,6 +435,7 @@ func main() {
 		mntRoot,
 		fuse.FSName("sshautofs"),
 		fuse.Subtype("sshautofs"),
+		fuse.ReadOnly(),
 		//		fuse.WritebackCache(),
 		//		fuse.MaxReadahead(1<<20),
 		//		fuse.AsyncRead(),
@@ -304,7 +460,7 @@ func main() {
 	startUnmountWorker(*timeout)
 
 	log.Println("sshautofs mounted successfully, serving...")
-	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf, sshfsOpts: sshfsOpts})
+	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf, sshfsOpts: sshfsOpts, commands: commands})
 	if err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
