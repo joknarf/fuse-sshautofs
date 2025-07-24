@@ -98,12 +98,12 @@ func (d *cmdDir) Attr(ctx context.Context, a *fuse.Attr) error {
 
 func (d *cmdDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	// log.Println("Lookup for cmd:", name)
-	if !IsValidHostname(name) {
-		return nil, syscall.ENOENT // No such file or directory
-	}
 	command, exists := d.fsys.commands[name]
-	if exists {
+	if exists && d.host != "" {
 		return &cmdNode{fsys: d.fsys, command: command, host: d.host}, nil
+	}
+	if !IsValidHostname(name) || d.host != "" {
+		return nil, syscall.ENOENT // No such file or directory
 	}
 	return &cmdDir{fsys: d.fsys, host: name}, nil
 }
