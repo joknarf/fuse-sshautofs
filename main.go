@@ -98,7 +98,7 @@ func (d *cmdDir) Attr(ctx context.Context, a *fuse.Attr) error {
 
 func (d *cmdDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	// log.Println("Lookup for cmd:", name)
-	if strings.HasPrefix(name, ".") {
+	if !IsValidHostname(name) {
 		return nil, syscall.ENOENT // No such file or directory
 	}
 	command, exists := d.fsys.commands[name]
@@ -219,7 +219,8 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 		return &cmdDir{fsys: d.fsys}, nil
 	}
 	hostname := name
-	if strings.HasPrefix(hostname, ".") || hostname == "" {
+	// Check if hostname is valid (letters, digits, hyphens, dots, no spaces, not empty, no slashes)
+	if !IsValidHostname(hostname) {
 		return nil, syscall.ENOENT // No such file or directory
 	}
 	mntTarget := filepath.Join(d.fsys.sshfsRoot, hostname)
@@ -296,7 +297,6 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 					}
 
 					delete(mountAccess, mnt)
-					log.Printf("Cleaned up idle sshfs mount entry: %s", mnt)
 				}
 			}
 			mountAccessMu.Unlock()
@@ -360,6 +360,23 @@ func unmountAllSSHFS(sshfsRoot string) {
 			os.Remove(mnt)
 		}
 	}
+}
+
+// IsValidHostname validates if the given hostname is valid
+func IsValidHostname(hostname string) bool {
+	if hostname == "" ||
+		strings.ContainsAny(hostname, " /\\") ||
+		strings.HasPrefix(hostname, ".") ||
+		strings.HasSuffix(hostname, ".") ||
+		strings.Contains(hostname, "..") {
+		return false
+	}
+	for _, r := range hostname {
+		if !(r == '-' || r == '.' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '#') {
+			return false
+		}
+	}
+	return true
 }
 
 func main() {
