@@ -265,7 +265,7 @@ func updateMountAccess(mnt string) {
 }
 
 // background goroutine to unmount unused sshfs mounts after timeout
-func startUnmountWorker(timeout time.Duration) {
+func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 	go func() {
 		for {
 			time.Sleep(10 * time.Second)
@@ -287,6 +287,14 @@ func startUnmountWorker(timeout time.Duration) {
 					if err := os.Remove(mnt); err != nil {
 						log.Printf("Failed to remove mountpoint %s: %v", mnt, err)
 					}
+
+					parentNodeID := fuse.RootID // Assuming the parent is the root node
+					name := filepath.Base(mnt)
+					// Notify the kernel about the deletion of the symlink
+					if err := conn.NotifyDelete(parentNodeID, 0, name); err != nil {
+						log.Printf("Failed to notify delete for %s: %v", mnt, err)
+					}
+
 					delete(mountAccess, mnt)
 					log.Printf("Cleaned up idle sshfs mount entry: %s", mnt)
 				}
@@ -304,6 +312,7 @@ func (s *symlinkNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Uid = uint32(os.Getuid())
 	a.Gid = uint32(os.Getgid())
 	a.Size = uint64(len(s.target))
+	a.Valid = 0 // Disable cache
 	return nil
 }
 
@@ -436,9 +445,9 @@ func main() {
 		fuse.FSName("sshautofs"),
 		fuse.Subtype("sshautofs"),
 		fuse.ReadOnly(),
-		//		fuse.WritebackCache(),
-		//		fuse.MaxReadahead(1<<20),
-		//		fuse.AsyncRead(),
+		// fuse.WritebackCache(),
+		// fuse.MaxReadahead(1<<20),
+		// fuse.AsyncRead(),
 	)
 	if err != nil {
 		log.Fatalf("Failed to mount: %v", err)
@@ -457,7 +466,7 @@ func main() {
 	}()
 
 	// Start background unmount worker
-	startUnmountWorker(*timeout)
+	startUnmountWorker(*timeout, c)
 
 	log.Println("sshautofs mounted successfully, serving...")
 	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf, sshfsOpts: sshfsOpts, commands: commands})
