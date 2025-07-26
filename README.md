@@ -33,6 +33,9 @@ drwxr-xr-x. 1 root root      12288 Jul 12 07:43 etc
 drwxr-xr-x. 1 root root       4096 May  8 10:53 home
 -rwxrwxrwx. 1 root root    2724480 Jun  9 20:32 init
 ...
+$ tail ~/servers/myhost/var/log/messages
+Jul 26 14:55:58 myhost systemd...
+...
 $ cat ~/servers/cmd/myhost/ps
 UID          PID    PPID  C STIME TTY          TIME CMD
 root           1       0  0 Jul09 ?        00:00:06 /usr/lib/systemd/systemd --switched-root --system --deserialize 18
