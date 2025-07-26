@@ -293,8 +293,11 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 						hostMutex := getHostMutex(hostname)
 						hostMutex.Lock()
 						defer hostMutex.Unlock()
-						time.Sleep(500 * time.Millisecond) // Allow some delay to access the mount again
-
+						time.Sleep(100 * time.Millisecond) // Allow some delay to access the mount again
+						age := now.Sub(mountAccess[mnt])
+						if age < timeout {
+							return // Still accessed recently, skip unmount
+						}
 						err := exec.Command("fusermount", "-u", mnt).Run()
 						if err != nil {
 							mountAccessMu.Lock()
@@ -313,7 +316,7 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 						delete(mountAccess, mnt)
 						mountAccessMu.Unlock()
 
-						time.Sleep(500 * time.Millisecond) // Allow some delay after unmounting
+						time.Sleep(100 * time.Millisecond) // Allow some delay after unmounting
 					}(mnt)
 				}
 			}
@@ -331,7 +334,7 @@ func (s *symlinkNode) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Uid = uint32(os.Getuid())
 	a.Gid = uint32(os.Getgid())
 	a.Size = uint64(len(s.target))
-	a.Valid = 0 // Disable cache
+	a.Valid = 0 // Disable cache but not working
 	return nil
 }
 
