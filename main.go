@@ -282,9 +282,9 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 
 			for mnt, last := range mountAccess {
 				age := now.Sub(last)
-				hostname := filepath.Base(mnt)               // Extract hostname from mount point
-				parentNodeID := fuse.RootID                  // Assuming the parent is the root node
-				conn.NotifyDelete(parentNodeID, 0, hostname) // Force Lookup to be called again
+				hostname := filepath.Base(mnt) // Extract hostname from mount point
+				//conn.NotifyDelete(parentNodeID, 0, hostname) // Force Lookup to be called again
+				conn.InvalidateEntry(fuse.RootID, hostname) // Force Lookup to be called again
 				if age > timeout {
 					wg.Add(1)
 					go func(mnt string) {
@@ -307,10 +307,12 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 						if err := os.Remove(mnt); err != nil {
 							log.Printf("Failed to remove mountpoint %s: %v", mnt, err)
 						}
+						//conn.NotifyDelete(fuse.RootID, 0, hostname) // Force Lookup to be called again
 
 						mountAccessMu.Lock()
 						delete(mountAccess, mnt)
 						mountAccessMu.Unlock()
+
 						time.Sleep(500 * time.Millisecond) // Allow some delay after unmounting
 					}(mnt)
 				}
