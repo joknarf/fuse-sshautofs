@@ -6,7 +6,7 @@ fuse automount sshfs filesystems
 Access any remote server filesystems through a `<hostname>` directory  
 
 * automatic access to servers filesystems through fuse-sshfs when accessing `<mountpoint>/<server>`
-  * transparently use sshfs to automatically mount `sshfs <server>:/ <mountpoint>-ssh/<server>`
+  * transparently use sshfs to mount `sshfs <server>:/ <mountpoint>-ssh/<server>`
   * creates symlink `<mountpoint>/<server> -> <mountpoint>-ssh/<server>` to access
   * automatic unmount after timeout
 * special cmd directory allow specific remote commands on servers
