@@ -60,7 +60,7 @@ UID          PID    PPID  C STIME TTY          TIME CMD
 root           1       0  0 Jul09 ?        00:00:06 /usr/lib/systemd/systemd --switched-root --system --deserialize 18
 root           2       0  0 Jul09 ?        00:00:00 [kthreadd]
 ...
-$ grep chronyd ~/mnt/cmd/myhost/ps
+$ grep chronyd ~/servers/cmd/myhost/ps
 chrony       955       1  0 08:39 ?        00:00:00 /usr/sbin/chronyd
 ```
 
