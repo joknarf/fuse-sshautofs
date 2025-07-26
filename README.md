@@ -19,7 +19,23 @@ Access any remote server filesystems through a `<hostname>` directory
 ## Usage
 
 ```
-$ sshautofs [-timeout=<duration>] [-F <ssh_config_file>] [-o sshfsopts] [-foreground] [-cmd cmd="cmd args",...] <mountpoint>
+$ ./sshautofs -h
+Usage: ./sshautofs [options] <mountpoint>
+Example: ./sshautofs ~/mnt
+
+Options:
+  -F string
+        ssh config file to use
+  -cmd string
+        Command to run for /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)
+  -foreground
+        Run in foreground (do not daemonize)
+  -o string
+        Additional sshfs options (e.g. -o reconnect,ro)
+  -remote_path string
+        Remote path to mount through sshfs (default "/")
+  -timeout duration
+        Timeout before unmounting unused sshfs mounts (e.g. 30s) (default 10m0s)
 ```
 
 ## Example
