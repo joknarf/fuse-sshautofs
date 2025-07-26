@@ -213,41 +213,47 @@ func (d *autoDir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 
 // On lookup, if host dir, ensure sshfs is mounted, then return a symlink node
 func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
-	// Check if the path is for the special /cmd/<host>/ps
-	//log.Println("Lookup for:", name)
 	if name == "cmd" {
 		return &cmdDir{fsys: d.fsys}, nil
 	}
+
 	hostname := name
-	// Check if hostname is valid (letters, digits, hyphens, dots, no spaces, not empty, no slashes)
 	if !IsValidHostname(hostname) {
-		return nil, syscall.ENOENT // No such file or directory
+		return nil, syscall.ENOENT
 	}
+
 	mntTarget := filepath.Join(d.fsys.sshfsRoot, hostname)
 
-	// If not mounted, mount it
+	// Synchronize mounting operations
+	mountMutex.Lock()
+	defer mountMutex.Unlock()
+
+	// Check if the directory is already mounted
 	if !isDirMounted(mntTarget) {
+		// Create the directory
 		err := os.MkdirAll(mntTarget, 0700)
 		if err != nil {
 			return nil, syscall.EIO
 		}
+
 		sshfsargs := []string{fmt.Sprintf("%s:/", hostname), mntTarget, "-o", d.fsys.sshfsOpts}
-		log.Println("Mounting sshfs for host:", hostname, "at", mntTarget, "with sshConfig:", d.fsys.sshConfig)
 		if d.fsys.sshConfig != "" {
 			sshfsargs = append(sshfsargs, []string{"-F", d.fsys.sshConfig}...)
 		}
+
+		log.Println("Mounting sshfs for host:", hostname, "at", mntTarget)
 		sshfsCmd := exec.Command("sshfs", sshfsargs...)
 		sshfsCmd.Env = os.Environ()
 		if err := sshfsCmd.Run(); err != nil {
-			// If mount failed, remove the directory so the symlink does not appear
-			log.Println("err:", err)
+			log.Println("Failed to mount sshfs for host:", hostname, "error:", err)
 			os.Remove(mntTarget)
 			return nil, syscall.EIO
 		}
 	}
-	// Update last access time for this mount
+
+	// Update last access time
 	updateMountAccess(mntTarget)
-	// Return a symlink node
+
 	return &symlinkNode{
 		name:   name,
 		target: mntTarget,
@@ -261,45 +267,45 @@ var mountAccess = make(map[string]time.Time)
 // updateMountAccess records the last access time for a mount
 func updateMountAccess(mnt string) {
 	mountAccessMu.Lock()
+	defer mountAccessMu.Unlock()
 	mountAccess[mnt] = time.Now()
-	mountAccessMu.Unlock()
 }
+
+// Separate mutexes for mounting and unmounting
+var mountMutex sync.Mutex
+var unmountMutex sync.Mutex
 
 // background goroutine to unmount unused sshfs mounts after timeout
 func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 	go func() {
 		for {
-			time.Sleep(10 * time.Second)
+			time.Sleep(1 * time.Second)
 			now := time.Now()
-			mountAccessMu.Lock()
+			unmountMutex.Lock()
 			for mnt, last := range mountAccess {
 				age := now.Sub(last)
 				if age > timeout {
-					if isDirMounted(mnt) {
-						err := exec.Command("fusermount", "-u", mnt).Run()
-						if err != nil {
-							//log.Printf("Failed to unmount (still busy?) %s: %v", mnt, err)
-							mountAccess[mnt] = time.Now() // Re-update access time to prevent immediate unmount
-							continue
-						} else {
-							log.Printf("Unmounted idle sshfs mount: %s", mnt)
-						}
+					err := exec.Command("fusermount", "-u", mnt).Run()
+					if err != nil {
+						log.Printf("Failed to unmount (still busy?) %s: %v", mnt, err)
+						mountAccess[mnt] = time.Now() // Re-update access time to prevent immediate unmount
+						continue
+					} else {
+						log.Printf("Unmounted idle sshfs mount: %s", mnt)
 					}
 					if err := os.Remove(mnt); err != nil {
 						log.Printf("Failed to remove mountpoint %s: %v", mnt, err)
 					}
-
 					parentNodeID := fuse.RootID // Assuming the parent is the root node
 					name := filepath.Base(mnt)
 					// Notify the kernel about the deletion of the symlink
 					if err := conn.NotifyDelete(parentNodeID, 0, name); err != nil {
 						log.Printf("Failed to notify delete for %s: %v", mnt, err)
 					}
-
 					delete(mountAccess, mnt)
 				}
 			}
-			mountAccessMu.Unlock()
+			unmountMutex.Unlock()
 		}
 	}()
 }
