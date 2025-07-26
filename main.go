@@ -415,7 +415,7 @@ func main() {
 	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 30s)")
 	opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
 	remotePath := flag.String("remote_path", "/", "Remote path to mount through sshfs")
-	cmd := flag.String("cmd", "", "Command to run for /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)")
+	cmd := flag.String("cmd", "", "Remote commands to expose in /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)")
 	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <mountpoint>\n", os.Args[0])
