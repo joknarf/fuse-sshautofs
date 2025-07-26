@@ -224,9 +224,10 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 
 	mntTarget := filepath.Join(d.fsys.sshfsRoot, hostname)
 
-	// Synchronize mounting operations
-	mountMutex.Lock()
-	defer mountMutex.Unlock()
+	// Get the mutex for this host and lock it
+	hostMutex := getHostMutex(hostname)
+	hostMutex.Lock()
+	defer hostMutex.Unlock()
 
 	// Check if the directory is already mounted
 	if !isDirMounted(mntTarget) {
@@ -271,24 +272,23 @@ func updateMountAccess(mnt string) {
 	mountAccess[mnt] = time.Now()
 }
 
-// Separate mutexes for mounting and unmounting
-var mountMutex sync.Mutex
-var unmountMutex sync.Mutex
-
 // background goroutine to unmount unused sshfs mounts after timeout
 func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 	go func() {
 		for {
 			time.Sleep(1 * time.Second)
 			now := time.Now()
-			unmountMutex.Lock()
 			for mnt, last := range mountAccess {
 				age := now.Sub(last)
 				if age > timeout {
+					hostname := filepath.Base(mnt) // Extract hostname from mount point
+					hostMutex := getHostMutex(hostname)
+					hostMutex.Lock()
+					time.Sleep(1000 * time.Millisecond) // Give some time for to access the mount if just mounted
 					err := exec.Command("fusermount", "-u", mnt).Run()
 					if err != nil {
-						log.Printf("Failed to unmount (still busy?) %s: %v", mnt, err)
 						mountAccess[mnt] = time.Now() // Re-update access time to prevent immediate unmount
+						hostMutex.Unlock()            // Unlock the host mutex if unmount failed
 						continue
 					} else {
 						log.Printf("Unmounted idle sshfs mount: %s", mnt)
@@ -303,9 +303,10 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 						log.Printf("Failed to notify delete for %s: %v", mnt, err)
 					}
 					delete(mountAccess, mnt)
+					time.Sleep(500 * time.Millisecond) // Give some time for the kernel to process the delete
+					hostMutex.Unlock()                 // Unlock the host mutex after unmounting
 				}
 			}
-			unmountMutex.Unlock()
 		}
 	}()
 }
@@ -384,6 +385,14 @@ func IsValidHostname(hostname string) bool {
 	}
 	return true
 }
+
+func getHostMutex(hostname string) *sync.Mutex {
+	mutex, _ := hostMutexes.LoadOrStore(hostname, &sync.Mutex{})
+	return mutex.(*sync.Mutex)
+}
+
+// Map to track per-host mutexes to synchronize mount and unmount operations
+var hostMutexes sync.Map
 
 func main() {
 	sshConfig := flag.String("F", "", "ssh config file to use")
