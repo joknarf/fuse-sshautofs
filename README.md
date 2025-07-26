@@ -68,11 +68,3 @@ chrony       955       1  0 08:39 ?        00:00:00 /usr/sbin/chronyd
 > * the mount is expiring by default after 10min, the sshfs will be unmounted after 10min without access.  
 > * In the special `cmd` directory, a cat `~/servers/cmd/myhost/ps` executes `ssh myhost 'ps -ef'` and display output
 
-## Options
-
-* `-timeout=1m` define expiration timeout to unmount sshfs
-* `-F ~/ssh/autofs` define ssh config file to use for sshfs
-* `-foreground` launch sshautofs in foreground (default daemonize)
-* `-o ro,reconnect` sshfs -o options to pass
-* `-cmd cmd='cmd args',...` commands to expose in `cmd` special directory
-
