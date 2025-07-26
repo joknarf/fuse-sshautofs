@@ -19,15 +19,15 @@ Access any remote server filesystems through a `<hostname>` directory
 ## Usage
 
 ```
-$ ./sshautofs -h
+$ ./sshautofs
 Usage: ./sshautofs [options] <mountpoint>
 Example: ./sshautofs ~/mnt
 
 Options:
   -F string
         ssh config file to use
-  -cmd string
-        Command to run for /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)
+  -cmd value
+        Remote commands to expose in /cmd/<host>/<cmd> (e.g. -cmd ps='/bin/ps -ef' -cmd ...)
   -foreground
         Run in foreground (do not daemonize)
   -o string
@@ -39,6 +39,7 @@ Options:
 ```
 
 ## Example
+
 ```
 $ sshautofs -cmd ps='/bin/ps -ef' ~/servers
 $ cd ~/servers/myhost
