@@ -228,9 +228,9 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	hostMutex := getHostMutex(hostname)
 	hostMutex.Lock()
 	defer hostMutex.Unlock()
-
+	_, err := os.Stat(mntTarget)
 	// Check if the directory is already mounted
-	if !isDirMounted(mntTarget) {
+	if os.IsNotExist(err) || !isDirMounted(mntTarget) {
 		// Create the directory
 		err := os.MkdirAll(mntTarget, 0700)
 		if err != nil {
@@ -278,35 +278,45 @@ func startUnmountWorker(timeout time.Duration, conn *fuse.Conn) {
 		for {
 			time.Sleep(1 * time.Second)
 			now := time.Now()
+			var wg sync.WaitGroup
+
 			for mnt, last := range mountAccess {
 				age := now.Sub(last)
+				hostname := filepath.Base(mnt)               // Extract hostname from mount point
+				parentNodeID := fuse.RootID                  // Assuming the parent is the root node
+				conn.NotifyDelete(parentNodeID, 0, hostname) // Force Lookup to be called again
 				if age > timeout {
-					hostname := filepath.Base(mnt) // Extract hostname from mount point
-					hostMutex := getHostMutex(hostname)
-					hostMutex.Lock()
-					time.Sleep(1000 * time.Millisecond) // Give some time for to access the mount if just mounted
-					err := exec.Command("fusermount", "-u", mnt).Run()
-					if err != nil {
-						mountAccess[mnt] = time.Now() // Re-update access time to prevent immediate unmount
-						hostMutex.Unlock()            // Unlock the host mutex if unmount failed
-						continue
-					} else {
+					wg.Add(1)
+					go func(mnt string) {
+						defer wg.Done()
+
+						hostMutex := getHostMutex(hostname)
+						hostMutex.Lock()
+						defer hostMutex.Unlock()
+						time.Sleep(500 * time.Millisecond) // Allow some delay to access the mount again
+
+						err := exec.Command("fusermount", "-u", mnt).Run()
+						if err != nil {
+							mountAccessMu.Lock()
+							mountAccess[mnt] = time.Now() // Re-update access time to prevent immediate unmount
+							mountAccessMu.Unlock()
+							return
+						}
+
 						log.Printf("Unmounted idle sshfs mount: %s", mnt)
-					}
-					if err := os.Remove(mnt); err != nil {
-						log.Printf("Failed to remove mountpoint %s: %v", mnt, err)
-					}
-					parentNodeID := fuse.RootID // Assuming the parent is the root node
-					name := filepath.Base(mnt)
-					// Notify the kernel about the deletion of the symlink
-					if err := conn.NotifyDelete(parentNodeID, 0, name); err != nil {
-						log.Printf("Failed to notify delete for %s: %v", mnt, err)
-					}
-					delete(mountAccess, mnt)
-					time.Sleep(500 * time.Millisecond) // Give some time for the kernel to process the delete
-					hostMutex.Unlock()                 // Unlock the host mutex after unmounting
+						if err := os.Remove(mnt); err != nil {
+							log.Printf("Failed to remove mountpoint %s: %v", mnt, err)
+						}
+
+						mountAccessMu.Lock()
+						delete(mountAccess, mnt)
+						mountAccessMu.Unlock()
+						time.Sleep(500 * time.Millisecond) // Allow some delay after unmounting
+					}(mnt)
 				}
 			}
+
+			wg.Wait() // Wait for all unmount goroutines to finish
 		}
 	}()
 }
