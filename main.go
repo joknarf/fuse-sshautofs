@@ -23,11 +23,12 @@ import (
 // sshAutoFS implements a FUSE FS that shows a symlink for each host directory,
 // and mounts sshfs on access.
 type sshAutoFS struct {
-	mntRoot   string            // e.g. /home/user/mnt
-	sshfsRoot string            // e.g. /home/user/mnt-ssh
-	sshConfig string            // Path to ssh config file, if any
-	sshfsOpts string            // Additional sshfs options
-	commands  map[string]string // Map to store commands
+	mntRoot    string            // e.g. /home/user/mnt
+	sshfsRoot  string            // e.g. /home/user/mnt-ssh
+	sshConfig  string            // Path to ssh config file, if any
+	sshfsOpts  string            // Additional sshfs options
+	commands   map[string]string // Map to store commands
+	remotePath string            // Add this field to store the remote path
 }
 
 type autoDir struct {
@@ -237,13 +238,13 @@ func (d *autoDir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 			return nil, syscall.EIO
 		}
 
-		sshfsargs := []string{fmt.Sprintf("%s:/", hostname), mntTarget, "-o", d.fsys.sshfsOpts}
+		sshfsArgs := []string{fmt.Sprintf("%s:%s", hostname, d.fsys.remotePath), mntTarget, "-o", d.fsys.sshfsOpts}
 		if d.fsys.sshConfig != "" {
-			sshfsargs = append(sshfsargs, []string{"-F", d.fsys.sshConfig}...)
+			sshfsArgs = append(sshfsArgs, []string{"-F", d.fsys.sshConfig}...)
 		}
 
 		log.Println("Mounting sshfs for host:", hostname, "at", mntTarget)
-		sshfsCmd := exec.Command("sshfs", sshfsargs...)
+		sshfsCmd := exec.Command("sshfs", sshfsArgs...)
 		sshfsCmd.Env = os.Environ()
 		if err := sshfsCmd.Run(); err != nil {
 			log.Println("Failed to mount sshfs for host:", hostname, "error:", err)
@@ -411,13 +412,16 @@ var hostMutexes sync.Map
 
 func main() {
 	sshConfig := flag.String("F", "", "ssh config file to use")
-	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 10m, 30s)")
-	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
-	cmd := flag.String("cmd", "", "Command to run for /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)")
+	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 30s)")
 	opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
+	remotePath := flag.String("remote_path", "/", "Remote path to mount through sshfs")
+	cmd := flag.String("cmd", "", "Command to run for /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)")
+	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s <mountpoint>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  Example: %s ~/mnt\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s [options] <mountpoint>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Example: %s ~/mnt\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		flag.PrintDefaults()
 	}
 	flag.Parse()
 	commands := make(map[string]string)
@@ -451,6 +455,7 @@ func main() {
 		sshfsOpts += "," + *opts
 	}
 	if flag.NArg() < 1 {
+		flag.Usage()
 		log.Fatal("Mount point is required as a positional argument")
 	}
 
@@ -516,7 +521,13 @@ func main() {
 	startUnmountWorker(*timeout, c)
 
 	log.Println("sshautofs mounted successfully, serving...")
-	err = fs.Serve(c, &sshAutoFS{mntRoot: mntRoot, sshfsRoot: sshfsRoot, sshConfig: sshConf, sshfsOpts: sshfsOpts, commands: commands})
+	err = fs.Serve(c, &sshAutoFS{
+		mntRoot:    mntRoot,
+		sshfsRoot:  sshfsRoot,
+		sshConfig:  sshConf,
+		sshfsOpts:  sshfsOpts,
+		commands:   commands,
+		remotePath: *remotePath})
 	if err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
