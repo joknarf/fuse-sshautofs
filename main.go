@@ -410,36 +410,49 @@ func getHostMutex(hostname string) *sync.Mutex {
 // Map to track per-host mutexes to synchronize mount and unmount operations
 var hostMutexes sync.Map
 
+type cmdArray []string
+
+func (c *cmdArray) String() string {
+	return strings.Join(*c, ",")
+}
+
+func (c *cmdArray) Set(value string) error {
+	*c = append(*c, value)
+	return nil
+}
+
 func main() {
 	sshConfig := flag.String("F", "", "ssh config file to use")
 	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 30s)")
 	opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
 	remotePath := flag.String("remote_path", "/", "Remote path to mount through sshfs")
-	cmd := flag.String("cmd", "", "Remote commands to expose in /cmd/<host>/<cmd> (e.g. ps='/bin/ps -ef',...)")
+	var cmds cmdArray
+	flag.Var(&cmds, "cmd", "Remote commands to expose in /cmd/<host>/<cmd> (e.g. -cmd ps='/bin/ps -ef' -cmd ...)")
 	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
+
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] <mountpoint>\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Example: %s ~/mnt\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 	}
+
 	flag.Parse()
+
 	commands := make(map[string]string)
-	if *cmd != "" {
-		for _, pair := range strings.Split(*cmd, ",") {
-			parts := strings.SplitN(pair, "=", 2)
-			if len(parts) != 2 {
-				log.Fatalf("Invalid command format: %s, expected format is cmd='/path/to/cmd args'", pair)
-			}
-			name := strings.TrimSpace(parts[0])
-			command := strings.TrimSpace(parts[1])
-			if name == "" || command == "" {
-				log.Fatalf("Invalid command name or command: %s", pair)
-			}
-			commands[name] = command
-			if *foreground {
-				log.Printf("Registered command: %s -> %s\n", name, command)
-			}
+	for _, pair := range cmds {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			log.Fatalf("Invalid command format: %s, expected format is cmd='/path/to/cmd args'", pair)
+		}
+		name := strings.TrimSpace(parts[0])
+		command := strings.TrimSpace(parts[1])
+		if name == "" || command == "" {
+			log.Fatalf("Invalid command name or command: %s", pair)
+		}
+		commands[name] = command
+		if *foreground {
+			log.Printf("Registered command: %s -> %s\n", name, command)
 		}
 	}
 	sshConf := ""
