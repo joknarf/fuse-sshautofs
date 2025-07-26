@@ -50,5 +50,5 @@ In the special `cmd` directory, a cat `~/servers/cmd/myhost/ps` executes `ssh my
 * `-F ~/ssh/autofs` define ssh config file to use for sshfs
 * `-foreground` launch sshautofs in foreground (default daemonize)
 * `-o ro,reconnect` sshfs -o options to pass
-* `-cmd cmd='cmd args',... commands to expose in `cmd` special directory
+* `-cmd cmd='cmd args',...` commands to expose in `cmd` special directory
 
