@@ -1,0 +1,168 @@
+name: Build binary (manylinux)
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+env:
+  TOOL: ${{ github.event.repository.name }}
+  TOOL_PATH: sshautofs
+  DESC: fuse automount sshfs filesystems
+  VERSION: ${{ github.event.release.tag_name }}
+  FPM_BASE: >
+    -s dir
+    --license=MIT
+    --maintainer=${{ github.repository_owner }}
+    --vendor=https://joknarf.github.io/joknarf-tools
+    -m joknarf@free.fr
+    -n ${{ github.event.repository.name }}
+    --url=https://github.com/${{ github.repository }}
+    -v ${{ github.event.release.tag_name }}
+
+jobs:
+  build-linux-x86_64:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ruby ruby-dev build-essential rpm
+          sudo gem install --no-document fpm
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build with manylinux (x86_64)
+        run: |
+          set -e
+          IMAGE=quay.io/pypa/manylinux2014_x86_64
+          docker run --rm \
+            -v "$PWD:/src" \
+            $IMAGE \
+            bash -c "
+              set -e
+              yum install -y epel-release
+              yum install -y golang fuse3 fuse3-libs
+              cd /src
+              go get bazil.org/fuse
+              ./build.bash
+            "
+
+      - name: Build DEB
+        run: |
+          fpm $FPM_BASE -t deb --prefix=/usr --description="$DESC" $TOOL_PATH=/bin/$TOOL_PATH
+          ln -s ${TOOL}_${VERSION}_amd64.deb ${TOOL}_amd64.deb
+
+      - name: Build RPM
+        run: |
+          fpm $FPM_BASE -t rpm --prefix=/usr --description="$DESC" $TOOL_PATH=/bin/$TOOL_PATH
+          ln -s $TOOL-$VERSION-1.x86_64.rpm $TOOL-x86_64.rpm
+
+      - name: Checkout yum
+        uses: actions/checkout@v3
+        with:
+          repository: joknarf/yum
+          token: ${{ secrets.JOKNARF_YUM_TOKEN }}
+          path: yum
+
+      - name: Update rpm
+        run: |
+          cp $TOOL-x86_64.rpm yum/
+
+      - name: Commit & Push
+        run: |
+          cd yum
+          git add $TOOL-x86_64.rpm
+          git commit -m "Update $TOOL-x86_64.rpm to $VERSION" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.JOKNARF_YUM_TOKEN }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.rpm
+            *.deb
+            dist/*
+
+  build-linux-aarch64:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y ruby ruby-dev build-essential rpm
+          sudo gem install --no-document fpm
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build with manylinux (aarch64)
+        run: |
+          set -e
+          IMAGE=quay.io/pypa/manylinux2014_x86_64
+          docker run --rm \
+            -v "$PWD:/src" \
+            $IMAGE \
+            bash -c "
+              set -e
+              yum install -y epel-release
+              yum install -y golang fuse3 fuse3-libs
+              cd /src
+              go get bazil.org/fuse
+              ./build.bash
+            "
+      - name: Build DEB
+        run: |
+          fpm $FPM_BASE -t deb --prefix=/usr --description="$DESC" $TOOL_PATH=/bin/$TOOL_PATH
+          ln -s ${TOOL}_${VERSION}_arm64.deb ${TOOL}_arm64.deb
+
+      - name: Build RPM
+        run: |
+          fpm $FPM_BASE -t rpm --prefix=/usr --description="$DESC" $TOOL_PATH=/bin/$TOOL_PATH
+          ln -s $TOOL-$VERSION-1.aarch64.rpm $TOOL-aarch64.rpm
+
+      - name: Checkout yum
+        uses: actions/checkout@v3
+        with:
+          repository: joknarf/yum
+          token: ${{ secrets.JOKNARF_YUM_TOKEN }}
+          path: yum
+
+      - name: Update rpm
+        run: |
+          cp $TOOL-aarch64.rpm yum/
+
+      - name: Commit & Push
+        run: |
+          cd yum
+          git add $TOOL-aarch64.rpm
+          git commit -m "Update $TOOL-aarch64.rpm to $VERSION" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.JOKNARF_YUM_TOKEN }}
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.rpm
+            *.deb
+            dist/*
+
