@@ -116,7 +116,7 @@ jobs:
       - name: Build with manylinux (aarch64)
         run: |
           set -e
-          IMAGE=quay.io/pypa/manylinux2014_aarch64
+          IMAGE=quay.io/pypa/manylinux_2_28_aarch64
           docker run --rm \
             -v "$PWD:/src" \
             $IMAGE \
