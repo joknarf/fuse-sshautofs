@@ -59,7 +59,8 @@ jobs:
 
       - name: Build DEB
         run: |
-          fpm $FPM_BASE -t deb --prefix=/usr --description="$DESC" -d fuse3 -d sshfs $TOOL_PATH=/bin/$TOOL_PATH
+          BUILD_EPOCH=$(date +%s)
+          fpm $FPM_BASE -t deb --prefix=/usr --description="$DESC" -d fuse3 -d sshfs --deb-field "Build-Date:$BUILD_EPOCH" $TOOL_PATH=/bin/$TOOL_PATH
           ln -s ${TOOL}_${VERSION}_amd64.deb ${TOOL}_amd64.deb
 
       - name: Build RPM
@@ -131,7 +132,8 @@ jobs:
             "
       - name: Build DEB
         run: |
-          fpm $FPM_BASE -t deb --prefix=/usr --description="$DESC" -d fuse3 -d sshfs $TOOL_PATH=/bin/$TOOL_PATH
+          BUILD_EPOCH=$(date +%s)
+          fpm $FPM_BASE -t deb --prefix=/usr --description="$DESC" -d fuse3 -d sshfs --deb-field "Build-Date:$BUILD_EPOCH" $TOOL_PATH=/bin/$TOOL_PATH
           ln -s ${TOOL}_${VERSION}_arm64.deb ${TOOL}_arm64.deb
 
       - name: Build RPM
