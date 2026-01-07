@@ -1,4 +1,5 @@
 [![Joknarf Tools](https://img.shields.io/badge/Joknarf%20Tools-Visit-darkgreen?logo=github)](https://joknarf.github.io/joknarf-tools)
+[![Build binary packages](https://github.com/joknarf/fuse-sshautofs/actions/workflows/release.yml/badge.svg)](https://github.com/joknarf/fuse-sshautofs/actions/workflows/release.yml)
 [![go](https://img.shields.io/badge/lang-Go%20-blue.svg)]()
 [![OS](https://img.shields.io/badge/OS-Linux%20-blue.svg)]()
 [![Licence](https://img.shields.io/badge/licence-MIT-blue.svg)](https://shields.io/)
