@@ -3,7 +3,7 @@
 [![go](https://img.shields.io/badge/lang-Go%20-blue.svg)]()
 [![OS](https://img.shields.io/badge/OS-Linux%20-blue.svg)]()
 [![Licence](https://img.shields.io/badge/licence-MIT-blue.svg)](https://shields.io/)
-[![Packages](https://img.shields.io/badge/Packages-%20rpm%20|%20deb%20|%20pkg%20|%20apk%20|%20brew%20-darkgreen.svg)](https://github.com/joknarf/fuse-sshautofs/releases/latest)
+[![Packages](https://img.shields.io/badge/Packages-%20rpm%20|%20deb%20-darkgreen.svg)](https://github.com/joknarf/fuse-sshautofs/releases/latest)
 
 # sshautofs
 fuse automount sshfs filesystems  
