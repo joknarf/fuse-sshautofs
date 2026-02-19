@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -19,6 +20,16 @@ import (
 	"bazil.org/fuse/fs"
 	"bazil.org/fuse/fuseutil"
 )
+
+// Config holds all parameters for the daemonized process
+type Config struct {
+	MountPoint string            `json:"mount_point"`
+	SSHConfig  string            `json:"ssh_config"`
+	Timeout    string            `json:"timeout"`
+	Opts       string            `json:"opts"`
+	RemotePath string            `json:"remote_path"`
+	Commands   map[string]string `json:"commands"`
+}
 
 // sshAutoFS implements a FUSE FS that shows a symlink for each host directory,
 // and mounts sshfs on access.
@@ -80,6 +91,29 @@ var _ fs.NodeStringLookuper = (*cmdDir)(nil)
 var _ fs.HandleReadDirAller = (*cmdDir)(nil)
 
 var _ fs.HandleReader = (*cmdHandle)(nil)
+
+// SaveConfigToEnv serializes the config to JSON and sets it as an environment variable
+func SaveConfigToEnv(cfg *Config) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return os.Setenv("SSHAUTOFS_CONFIG", string(data))
+}
+
+// LoadConfigFromEnv reads the config from the environment variable
+func LoadConfigFromEnv() (*Config, error) {
+	configStr := os.Getenv("SSHAUTOFS_CONFIG")
+	if configStr == "" {
+		return nil, fmt.Errorf("SSHAUTOFS_CONFIG environment variable not set")
+	}
+	cfg := &Config{}
+	err := json.Unmarshal([]byte(configStr), cfg)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
 
 func (fsys *sshAutoFS) Root() (fs.Node, error) {
 	return &autoDir{fsys: fsys}, nil
@@ -422,89 +456,154 @@ func (c *cmdArray) Set(value string) error {
 }
 
 func main() {
-	sshConfig := flag.String("F", "", "ssh config file to use")
-	timeout := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 30s)")
-	opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
-	remotePath := flag.String("remote_path", "/", "Remote path to mount through sshfs")
-	var cmds cmdArray
-	flag.Var(&cmds, "cmd", "Remote commands to expose in /cmd/<host>/<cmd> (e.g. -cmd ps='/bin/ps -ef' -cmd ...)")
-	foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
+	// Check if configuration is passed via environment variable (for daemonized process)
+	var mntRoot, sshConf, sshfsOpts string
+	var commands map[string]string
+	var timeout time.Duration
 
-	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s [options] <mountpoint>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Example: %s ~/mnt\n\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "Options:\n")
-		flag.PrintDefaults()
-	}
+	if os.Getenv("SSHAUTOFS_CONFIG") != "" {
+		// Load from environment variable (daemonized process)
+		cfg, err := LoadConfigFromEnv()
+		if err != nil {
+			log.Fatalf("Failed to load config from environment: %v", err)
+		}
 
-	flag.Parse()
+		mntRoot = cfg.MountPoint
+		sshConf = cfg.SSHConfig
+		commands = cfg.Commands
 
-	commands := make(map[string]string)
-	for _, pair := range cmds {
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			log.Fatalf("Invalid command format: %s, expected format is cmd='/path/to/cmd args'", pair)
+		// Parse timeout from string
+		timeout, err = time.ParseDuration(cfg.Timeout)
+		if err != nil {
+			log.Fatalf("Failed to parse timeout: %v", err)
 		}
-		name := strings.TrimSpace(parts[0])
-		command := strings.TrimSpace(parts[1])
-		if name == "" || command == "" {
-			log.Fatalf("Invalid command name or command: %s", pair)
-		}
-		commands[name] = command
-		if *foreground {
-			log.Printf("Registered command: %s -> %s\n", name, command)
-		}
-	}
-	sshConf := ""
-	if *sshConfig != "" {
-		var errF error
-		sshConf, errF = filepath.Abs(*sshConfig)
-		if errF != nil {
-			log.Fatalf("Failed to resolve ssh config file: %v", errF)
-		}
-	}
-	sshfsOpts := "LogLevel=ERROR,BatchMode=yes"
-	if *opts != "" {
-		sshfsOpts += "," + *opts
-	}
-	if flag.NArg() < 1 {
-		flag.Usage()
-		log.Fatal("Mount point is required as a positional argument")
-	}
 
-	mntRoot, err := filepath.Abs(flag.Args()[0])
-	if err != nil {
-		log.Fatalf("Failed to resolve mount point: %v", err)
-	}
-	sshfsRoot := mntRoot + "-ssh"
-	if err := os.MkdirAll(sshfsRoot, 0700); err != nil {
-		log.Fatalf("Failed to create sshfs root: %v", err)
-	}
-	if !*foreground {
-		// Fork and detach
-		if os.Getppid() != 1 {
-			exe, err := os.Executable()
-			if err != nil {
-				os.Exit(1)
+		// Build sshfs options
+		sshfsOpts = "LogLevel=ERROR,BatchMode=yes"
+		if cfg.Opts != "" {
+			sshfsOpts += "," + cfg.Opts
+		}
+
+		// Create sshfs root directory
+		sshfsRoot := mntRoot + "-ssh"
+		if err := os.MkdirAll(sshfsRoot, 0700); err != nil {
+			log.Fatalf("Failed to create sshfs root: %v", err)
+		}
+	} else {
+		// Parse command-line flags (parent process)
+		sshConfig := flag.String("F", "", "ssh config file to use")
+		timeoutFlag := flag.Duration("timeout", 10*time.Minute, "Timeout before unmounting unused sshfs mounts (e.g. 30s)")
+		opts := flag.String("o", "", "Additional sshfs options (e.g. -o reconnect,ro)")
+		remotePath := flag.String("remote_path", "/", "Remote path to mount through sshfs")
+		var cmds cmdArray
+		flag.Var(&cmds, "cmd", "Remote commands to expose in /cmd/<host>/<cmd> (e.g. -cmd ps='/bin/ps -ef' -cmd ...)")
+		foreground := flag.Bool("foreground", false, "Run in foreground (do not daemonize)")
+
+		flag.Usage = func() {
+			fmt.Fprintf(os.Stderr, "Usage: %s [options] <mountpoint>\n", os.Args[0])
+			fmt.Fprintf(os.Stderr, "Example: %s ~/mnt\n\n", os.Args[0])
+			fmt.Fprintf(os.Stderr, "Options:\n")
+			flag.PrintDefaults()
+		}
+
+		flag.Parse()
+
+		commands = make(map[string]string)
+		for _, pair := range cmds {
+			parts := strings.SplitN(pair, "=", 2)
+			if len(parts) != 2 {
+				log.Fatalf("Invalid command format: %s, expected format is cmd='/path/to/cmd args'", pair)
 			}
-			attr := &os.ProcAttr{
-				Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-				Env:   os.Environ(),
+			name := strings.TrimSpace(parts[0])
+			command := strings.TrimSpace(parts[1])
+			if name == "" || command == "" {
+				log.Fatalf("Invalid command name or command: %s", pair)
 			}
-			_, err = os.StartProcess(exe, append([]string{exe, "-foreground"}, os.Args[1:]...), attr)
-			if err != nil {
-				os.Exit(1)
+			commands[name] = command
+			if *foreground {
+				log.Printf("Registered command: %s -> %s\n", name, command)
 			}
-			os.Exit(0)
 		}
-		// Redirect output to /dev/null
-		f, _ := os.OpenFile("/dev/null", os.O_RDWR, 0)
-		os.Stdout = f
-		os.Stderr = f
-		log.SetOutput(f)
+
+		sshConf = ""
+		if *sshConfig != "" {
+			var errF error
+			sshConf, errF = filepath.Abs(*sshConfig)
+			if errF != nil {
+				log.Fatalf("Failed to resolve ssh config file: %v", errF)
+			}
+		}
+
+		sshfsOpts = "LogLevel=ERROR,BatchMode=yes"
+		if *opts != "" {
+			sshfsOpts += "," + *opts
+		}
+
+		if flag.NArg() < 1 {
+			flag.Usage()
+			log.Fatal("Mount point is required as a positional argument")
+		}
+
+		var err error
+		mntRoot, err = filepath.Abs(flag.Args()[0])
+		if err != nil {
+			log.Fatalf("Failed to resolve mount point: %v", err)
+		}
+
+		sshfsRoot := mntRoot + "-ssh"
+		if err := os.MkdirAll(sshfsRoot, 0700); err != nil {
+			log.Fatalf("Failed to create sshfs root: %v", err)
+		}
+
+		timeout = *timeoutFlag
+
+		if !*foreground {
+			// Daemonize by forking with the config in an environment variable
+			if os.Getppid() != 1 {
+				cfg := &Config{
+					MountPoint: mntRoot,
+					SSHConfig:  sshConf,
+					Timeout:    timeoutFlag.String(),
+					Opts:       *opts,
+					RemotePath: *remotePath,
+					Commands:   commands,
+				}
+
+				// Create a copy of the environment with the config
+				env := os.Environ()
+				configJSON, err := json.Marshal(cfg)
+				if err != nil {
+					log.Fatalf("Failed to marshal config: %v", err)
+				}
+				env = append(env, fmt.Sprintf("SSHAUTOFS_CONFIG=%s", string(configJSON)))
+
+				exe := os.Args[0]
+				attr := &os.ProcAttr{
+					Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+					Env:   env,
+				}
+
+				// Only pass -foreground to the child process, config is in environment
+				_, err = os.StartProcess(exe, []string{exe, "-foreground"}, attr)
+				if err != nil {
+					os.Exit(1)
+				}
+				os.Exit(0)
+			}
+
+		}
 	}
 
 	log.Printf("Attempting to mount sshautofs at %s\n", mntRoot)
+	sshfsRoot := mntRoot + "-ssh"
+	remotePath := ""
+
+	// Extract remotePath from config if loaded from environment
+	if os.Getenv("SSHAUTOFS_CONFIG") != "" {
+		cfg, _ := LoadConfigFromEnv()
+		remotePath = cfg.RemotePath
+	}
+
 	c, err := fuse.Mount(
 		mntRoot,
 		fuse.FSName("sshautofs"),
@@ -531,7 +630,7 @@ func main() {
 	}()
 
 	// Start background unmount worker
-	startUnmountWorker(*timeout, c)
+	startUnmountWorker(timeout, c)
 
 	log.Println("sshautofs mounted successfully, serving...")
 	err = fs.Serve(c, &sshAutoFS{
@@ -540,7 +639,7 @@ func main() {
 		sshConfig:  sshConf,
 		sshfsOpts:  sshfsOpts,
 		commands:   commands,
-		remotePath: *remotePath})
+		remotePath: remotePath})
 	if err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
