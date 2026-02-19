@@ -92,23 +92,22 @@ var _ fs.HandleReadDirAller = (*cmdDir)(nil)
 
 var _ fs.HandleReader = (*cmdHandle)(nil)
 
-// SaveConfigToEnv serializes the config to JSON and sets it as an environment variable
-func SaveConfigToEnv(cfg *Config) error {
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		return err
+// LoadConfigFromPipe reads the config from file descriptor 3 (passed from parent)
+func LoadConfigFromPipe() (*Config, error) {
+	// Read from fd 3 which is passed by parent process
+	cfgFile := os.NewFile(3, "config")
+	if cfgFile == nil {
+		return nil, fmt.Errorf("config pipe not available")
 	}
-	return os.Setenv("SSHAUTOFS_CONFIG", string(data))
-}
+	defer cfgFile.Close()
 
-// LoadConfigFromEnv reads the config from the environment variable
-func LoadConfigFromEnv() (*Config, error) {
-	configStr := os.Getenv("SSHAUTOFS_CONFIG")
-	if configStr == "" {
-		return nil, fmt.Errorf("SSHAUTOFS_CONFIG environment variable not set")
+	configData, err := os.ReadFile("/proc/self/fd/3")
+	if err != nil {
+		return nil, err
 	}
+
 	cfg := &Config{}
-	err := json.Unmarshal([]byte(configStr), cfg)
+	err = json.Unmarshal(configData, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -461,13 +460,10 @@ func main() {
 	var commands map[string]string
 	var timeout time.Duration
 
-	if os.Getenv("SSHAUTOFS_CONFIG") != "" {
-		// Load from environment variable (daemonized process)
-		cfg, err := LoadConfigFromEnv()
-		if err != nil {
-			log.Fatalf("Failed to load config from environment: %v", err)
-		}
-
+	// Check if config is passed via pipe (file descriptor 3)
+	cfg, err := LoadConfigFromPipe()
+	if err == nil {
+		// Load from pipe (daemonized process)
 		mntRoot = cfg.MountPoint
 		sshConf = cfg.SSHConfig
 		commands = cfg.Commands
@@ -558,9 +554,15 @@ func main() {
 		timeout = *timeoutFlag
 
 		if !*foreground {
-			// Daemonize by forking with the config in an environment variable
+			// Daemonize by forking with the config passed via pipe
 			if os.Getppid() != 1 {
-				cfg := &Config{
+				// Create a pipe to pass config to child process
+				pipeRead, pipeWrite, err := os.Pipe()
+				if err != nil {
+					log.Fatalf("Failed to create pipe: %v", err)
+				}
+
+				cfgData := &Config{
 					MountPoint: mntRoot,
 					SSHConfig:  sshConf,
 					Timeout:    timeoutFlag.String(),
@@ -568,41 +570,38 @@ func main() {
 					RemotePath: *remotePath,
 					Commands:   commands,
 				}
-
-				// Create a copy of the environment with the config
-				env := os.Environ()
-				configJSON, err := json.Marshal(cfg)
+				configJSON, err := json.Marshal(cfgData)
 				if err != nil {
 					log.Fatalf("Failed to marshal config: %v", err)
 				}
-				env = append(env, fmt.Sprintf("SSHAUTOFS_CONFIG=%s", string(configJSON)))
 
 				exe := os.Args[0]
 				attr := &os.ProcAttr{
-					Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
-					Env:   env,
+					Files: []*os.File{os.Stdin, os.Stdout, os.Stderr, pipeRead},
+					Env:   os.Environ(),
 				}
 
-				// Only pass -foreground to the child process, config is in environment
+				// Start child process with -foreground, config passed via fd 3
 				_, err = os.StartProcess(exe, []string{exe, "-foreground"}, attr)
+				if err != nil {
+					pipeWrite.Close()
+					os.Exit(1)
+				}
+
+				// Write config to pipe and close write end
+				_, err = pipeWrite.Write(configJSON)
+				pipeWrite.Close()
 				if err != nil {
 					os.Exit(1)
 				}
 				os.Exit(0)
 			}
-
 		}
 	}
 
 	log.Printf("Attempting to mount sshautofs at %s\n", mntRoot)
 	sshfsRoot := mntRoot + "-ssh"
 	remotePath := ""
-
-	// Extract remotePath from config if loaded from environment
-	if os.Getenv("SSHAUTOFS_CONFIG") != "" {
-		cfg, _ := LoadConfigFromEnv()
-		remotePath = cfg.RemotePath
-	}
 
 	c, err := fuse.Mount(
 		mntRoot,
